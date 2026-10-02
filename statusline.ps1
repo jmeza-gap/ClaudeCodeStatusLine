@@ -351,7 +351,11 @@ function Format-ExtraUsage($usage) {
             $used = "{0:F2}" -f ([double]$usedRaw / 100)
             $limit = "{0:F2}" -f ([double]$limitRaw / 100)
             $color = Get-UsageColor $pct
-            return "${sep}${white}extra${reset} ${color}`$${used}/`$${limit}${reset}"
+			
+			$percentUsed = "{0:F1}" -f (([double]$usedRaw / [double]$limitRaw) * 100)
+            
+			# return "${sep}${white}extra${reset} ${color}`$${used}/`$${limit}${reset}"
+			return "${sep}${white}extra${reset} ${color}${percentUsed}% used${reset}"
         } else {
             return "${sep}${white}extra${reset} ${green}enabled${reset}"
         }
