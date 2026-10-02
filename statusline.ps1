@@ -55,6 +55,18 @@ function Coalesce($value, $default) {
     if ($null -ne $value) { return $value } else { return $default }
 }
 
+# Visible length of a string (ANSI color codes do not take up columns)
+function Get-VisibleLength([string]$text) {
+    return ($text -replace "$([char]0x1b)\[[0-9;]*m", '').Length
+}
+
+# Cut text to $max chars, marking the cut with "~" (ASCII: PowerShell 5 mangles "…" on redirected stdout)
+function Limit-Text([string]$text, [int]$max) {
+    if ($text.Length -le $max) { return $text }
+    if ($max -le 1) { return "~" }
+    return $text.Substring(0, $max - 1) + "~"
+}
+
 # Return $true if $a > $b using semantic versioning
 function Test-VersionGreaterThan([string]$a, [string]$b) {
     try {
@@ -146,6 +158,9 @@ $out = ""
 $out += "${blue}${modelName}${reset}"
 
 # Current working directory
+$locationToken = "<<LOCATION>>"
+$displayDir = $null
+$gitBranch = $null
 $cwd = $data.cwd
 if ($cwd) {
     $displayDir = Split-Path $cwd -Leaf
@@ -154,9 +169,9 @@ if ($cwd) {
         $gitBranch = git -C $cwd rev-parse --abbrev-ref HEAD 2>$null
     } catch {}
     $out += " ${dim}|${reset} "
-    $out += "${cyan}${displayDir}${reset}"
+    # dir@branch is filled in at the end, once we know how much room is left
+    $out += $locationToken
     if ($gitBranch) {
-        $out += "${dim}@${reset}${green}${gitBranch}${reset}"
         try {
             $numstat = git -C $cwd diff --numstat 2>$null
             if ($numstat) {
@@ -497,6 +512,48 @@ if ($env:STATUSLINE_CHECK_UPDATES -ne "false") {
 # Append CLI version as last segment
 if ($cliVersion) {
     $out += " ${dim}|${reset} ${orange}v${cliVersion}${reset}"
+}
+
+# ===== Fit dir@branch into the space left over =====
+# Claude Code cuts a too-long statusline with "...", which can hide the usage data.
+# Shrink dir@branch instead. Width: STATUSLINE_MAX_WIDTH, else COLUMNS (set by Claude Code).
+if ($displayDir) {
+    $termWidth = 0
+    foreach ($w in @($env:STATUSLINE_MAX_WIDTH, $env:COLUMNS)) {
+        if ($w -match '^\d+$' -and [int]$w -gt 0) { $termWidth = [int]$w; break }
+    }
+    $dirText = "$displayDir"
+    $branchText = if ($gitBranch) { "$gitBranch" } else { "" }
+    $minPart = 6
+
+    if ($termWidth -gt 0) {
+        # Keep a few columns spare for Claude Code's own padding
+        $restLength = Get-VisibleLength ($out.Replace($locationToken, ""))
+        $budget = $termWidth - $restLength - 4
+    } else {
+        # Width unknown: fall back to a fixed cap
+        $budget = 40
+    }
+
+    $sepLength = if ($branchText) { 1 } else { 0 }
+    # Trim the longer part first, keeping its start (ticket prefixes live there)
+    while (($dirText.Length + $sepLength + $branchText.Length) -gt $budget) {
+        if ($branchText.Length -ge $dirText.Length -and $branchText.Length -gt $minPart) {
+            $branchText = Limit-Text $gitBranch ($branchText.Length - 1)
+        } elseif ($dirText.Length -gt $minPart) {
+            $dirText = Limit-Text $displayDir ($dirText.Length - 1)
+        } elseif ($branchText.Length -gt $minPart) {
+            $branchText = Limit-Text $gitBranch ($branchText.Length - 1)
+        } else {
+            break
+        }
+    }
+
+    $location = "${cyan}${dirText}${reset}"
+    if ($branchText) { $location += "${dim}@${reset}${green}${branchText}${reset}" }
+    $out = $out.Replace($locationToken, $location)
+} else {
+    $out = $out.Replace($locationToken, "")
 }
 
 # Output
